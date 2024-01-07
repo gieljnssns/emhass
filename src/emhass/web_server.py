@@ -15,6 +15,7 @@ pd.options.plotting.backend = "plotly"
 from emhass.command_line import set_input_data_dict
 from emhass.command_line import perfect_forecast_optim, dayahead_forecast_optim, naive_mpc_optim
 from emhass.command_line import forecast_model_fit, forecast_model_predict, forecast_model_tune
+from emhass.command_line import csv_predict
 from emhass.command_line import publish_data
 
 # Define the Flask instance
@@ -239,6 +240,11 @@ def action_call(action_name):
             pickle.dump(injection_dict, fid)
         msg = f'EMHASS >> Action forecast-model-tune executed... \n'
         return make_response(msg, 201)
+    elif action_name == 'csv-predict':
+        app.logger.info(" >> Performing a csv predict...")
+        csv_predict(input_data_dict, app.logger)
+        msg = f'EMHASS >> Action csv-predict executed... \n'
+        return make_response(msg, 201)
     else:
         app.logger.error("ERROR: passed action is not valid")
         msg = f'EMHASS >> ERROR: Passed action is not valid... \n'
@@ -267,9 +273,11 @@ if __name__ == "__main__":
             app.logger.error("options.json does not exists")
         DATA_PATH = "/share/" #"/data/"
     else:
-        CONFIG_PATH = os.getenv("CONFIG_PATH", default="/app/config_emhass.yaml")
+        CONFIG_PATH = os.getenv("CONFIG_PATH", default="/workspaces/emhass/app/config_emhass.yaml")
+        # CONFIG_PATH = os.getenv("CONFIG_PATH", default="/app/config_emhass.yaml")
         options = None
-        DATA_PATH = os.getenv("DATA_PATH", default="/app/data/")
+        DATA_PATH = os.getenv("DATA_PATH", default="/workspaces/emhass/app/data/")
+        # DATA_PATH = os.getenv("DATA_PATH", default="/app/data/")
     config_path = Path(CONFIG_PATH)
     data_path = Path(DATA_PATH)
     
@@ -330,7 +338,8 @@ if __name__ == "__main__":
     else:
         costfun = os.getenv('LOCAL_COSTFUN', default='profit')
         logging_level = os.getenv('LOGGING_LEVEL', default='INFO')
-        with open(os.getenv('SECRETS_PATH', default='/app/secrets_emhass.yaml'), 'r') as file:
+        # with open(os.getenv('SECRETS_PATH', default='/app/secrets_emhass.yaml'), 'r') as file:
+        with open(os.getenv('SECRETS_PATH', default='/workspaces/emhass/app/secrets_emhass.yaml'), 'r') as file:
             params_secrets = yaml.load(file, Loader=yaml.FullLoader)
         hass_url = params_secrets['hass_url']
         
