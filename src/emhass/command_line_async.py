@@ -20,7 +20,7 @@ from emhass import utils_async as utils
 from emhass.forecast_async import Forecast
 from emhass.machine_learning_forecaster_async import MLForecaster
 from emhass.machine_learning_regressor_async import MLRegressor
-from emhass.optimization import Optimization
+from emhass.optimization_async import Optimization
 from emhass.retrieve_hass_async import RetrieveHass
 
 default_csv_filename = "opt_res_latest.csv"
@@ -514,6 +514,19 @@ async def set_input_data_dict(
                 msg = f"CSV file should contain the following columns: {', '.join(required_columns)}"
                 logger.error(msg)
                 return False
+    elif set_type == "teach-deferrable":
+        df_input_data, df_input_data_dayahead = None, None
+        P_PV_forecast, P_load_forecast = None, None
+        days_list = None
+        params = orjson.loads(params)
+        if "start_time" in params["passed_data"]:
+            start_time = params["passed_data"]["start_time"]
+        if "end_time" in params["passed_data"]:
+            end_time = params["passed_data"]["end_time"]
+        if "deferrable_load_id" in params["passed_data"]:
+            deferrable_load_id = params["passed_data"]["deferrable_load_id"]
+        if "profile_name" in params["passed_data"]:
+            profile_name = params["passed_data"]["profile_name"]
     elif set_type == "publish-data":
         df_input_data, df_input_data_dayahead = None, None
         P_PV_forecast, P_load_forecast = None, None
@@ -629,8 +642,31 @@ async def perfect_forecast_optim(
     )
     if isinstance(df_input_data, bool) and not df_input_data:
         return False
+
+    # Load deferrable profiles if specified
+    def_profile = None
+    if "def_profile" in input_data_dict["params"]["passed_data"] and input_data_dict["params"]["passed_data"]["def_profile"] != None:
+        profile_names = input_data_dict["params"]["passed_data"]["def_profile"]
+        logger.info(f"def_profile parameter found: {profile_names}")
+
+        # Check if any valid profile names are provided (not None, not empty string)
+        valid_profiles = [name for name in profile_names if name and name != ""]
+        if valid_profiles:
+            logger.info(f"Loading {len(valid_profiles)} deferrable profiles: {valid_profiles}")
+            def_profile = await load_deferrable_profiles(
+                profile_names, input_data_dict["emhass_conf"], logger
+            )
+            if def_profile:
+                logger.info(f"Successfully loaded {len([p for p in def_profile if p is not None])} profiles")
+            else:
+                logger.warning("No profiles were successfully loaded")
+        else:
+            logger.info("No valid profile names provided in def_profile parameter")
+    else:
+        logger.debug("No def_profile parameter found in runtime data")
+
     opt_res = await input_data_dict["opt"].perform_perfect_forecast_optim(
-        df_input_data, input_data_dict["days_list"]
+        df_input_data, input_data_dict["days_list"], def_profile=def_profile
     )
     # Save CSV file for analysis
     if save_data_to_file:
@@ -696,10 +732,34 @@ async def dayahead_forecast_optim(
         df_input_data_dayahead["outdoor_temperature_forecast"] = input_data_dict[
             "params"
         ]["passed_data"]["outdoor_temperature_forecast"]
-    opt_res_dayahead = input_data_dict["opt"].perform_dayahead_forecast_optim(
+
+    # Load deferrable profiles if specified
+    def_profile = None
+    if "def_profile" in input_data_dict["params"]["passed_data"] and input_data_dict["params"]["passed_data"]["def_profile"] != None:
+        profile_names = input_data_dict["params"]["passed_data"]["def_profile"]
+        logger.info(f"def_profile parameter found: {profile_names}")
+
+        # Check if any valid profile names are provided (not None, not empty string)
+        valid_profiles = [name for name in profile_names if name and name != ""]
+        if valid_profiles:
+            logger.info(f"Loading {len(valid_profiles)} deferrable profiles: {valid_profiles}")
+            def_profile = await load_deferrable_profiles(
+                profile_names, input_data_dict["emhass_conf"], logger
+            )
+            if def_profile:
+                logger.info(f"Successfully loaded {len([p for p in def_profile if p is not None])} profiles")
+            else:
+                logger.warning("No profiles were successfully loaded")
+        else:
+            logger.info("No valid profile names provided in def_profile parameter")
+    else:
+        logger.debug("No def_profile parameter found in runtime data")
+
+    opt_res_dayahead = await input_data_dict["opt"].perform_dayahead_forecast_optim(
         df_input_data_dayahead,
         input_data_dict["P_PV_forecast"],
         input_data_dict["P_load_forecast"],
+        def_profile=def_profile,
     )
     # Save CSV file for publish_data
     if save_data_to_file:
@@ -784,7 +844,31 @@ async def naive_mpc_optim(
     def_end_timestep = input_data_dict["params"]["optim_conf"][
         "end_timesteps_of_each_deferrable_load"
     ]
-    opt_res_naive_mpc = input_data_dict["opt"].perform_naive_mpc_optim(
+
+    # Load deferrable profiles if specified
+    def_profile = None
+    if "def_profile" in input_data_dict["params"]["passed_data"] and input_data_dict["params"]["passed_data"]["def_profile"] != None:
+        profile_names = input_data_dict["params"]["passed_data"]["def_profile"]
+        logger.info(f"def_profile parameter found: {profile_names}")
+
+        # Check if any valid profile names are provided (not None, not empty string)
+        valid_profiles = [name for name in profile_names if name and name != ""]
+        if valid_profiles:
+            logger.info(f"Loading {len(valid_profiles)} deferrable profiles: {valid_profiles}")
+            def_profile = await load_deferrable_profiles(
+                profile_names, input_data_dict["emhass_conf"], logger
+            )
+            if def_profile:
+                logger.info(f"Successfully loaded {len([p for p in def_profile if p is not None])} profiles")
+            else:
+                logger.warning("No profiles were successfully loaded")
+        else:
+            logger.info("No valid profile names provided in def_profile parameter")
+    else:
+        logger.debug("No def_profile parameter found in runtime data")
+
+
+    opt_res_naive_mpc = await input_data_dict["opt"].perform_naive_mpc_optim(
         df_input_data_dayahead,
         input_data_dict["P_PV_forecast"],
         input_data_dict["P_load_forecast"],
@@ -795,6 +879,7 @@ async def naive_mpc_optim(
         def_total_timestep,
         def_start_timestep,
         def_end_timestep,
+        def_profile=def_profile,
     )
     # Save CSV file for publish_data
     if save_data_to_file:
@@ -1143,6 +1228,307 @@ async def regressor_model_predict(
             type_var="mlregressor",
         )
     return prediction
+
+
+async def load_deferrable_profiles(
+    profile_names: list,
+    emhass_conf: dict,
+    logger: logging.Logger,
+) -> list:
+    """
+    Load deferrable load profiles from saved files.
+
+    :param profile_names: List of profile names to load
+    :type profile_names: list
+    :param emhass_conf: Dictionary containing the needed emhass paths
+    :type emhass_conf: dict
+    :param logger: The passed logger object
+    :type logger: logging.Logger
+    :return: List of profile names that were successfully validated (None for profiles that couldn't be loaded)
+    :rtype: list
+    """
+    logger.info(f"Validating deferrable profiles: {profile_names}")
+    profiles = []
+    profiles_dir = emhass_conf["data_path"] / "deferrable_profiles"
+    logger.debug(f"Profiles directory: {profiles_dir}")
+
+    for profile_name in profile_names:
+        if profile_name is None or profile_name == "" or profile_name == 0:
+            logger.debug(f"Skipping empty/None profile name")
+            profiles.append(None)
+            continue
+
+        profile_filename = f"{profile_name}.pkl"
+        profile_path = profiles_dir / profile_filename
+        logger.debug(f"Looking for profile file: {profile_path}")
+
+        try:
+            if profile_path.exists():
+                async with aiofiles.open(profile_path, "rb") as f:
+                    content = await f.read()
+                    profile_data = pickle.loads(content)
+                    if "load_profile" in profile_data and profile_data["load_profile"]:
+                        profiles.append(profile_name)
+                        logger.info(f"Validated deferrable profile: {profile_name} with {len(profile_data['load_profile'])} data points")
+                    else:
+                        logger.warning(f"Invalid profile data in {profile_name}")
+                        profiles.append(None)
+            else:
+                logger.warning(f"Deferrable profile not found: {profile_path}")
+                profiles.append(None)
+        except Exception as e:
+            logger.error(f"Error validating deferrable profile {profile_name}: {str(e)}")
+            profiles.append(None)
+
+    logger.info(f"Finished validating profiles: {len([p for p in profiles if p is not None])} successful out of {len(profiles)} total")
+    return profiles
+
+
+async def debug_deferrable_status(
+    input_data_dict: dict,
+    logger: logging.Logger,
+    debug: bool | None = False,
+) -> dict:
+    """
+    Debug function to analyze current deferrable load status and profile data.
+
+    This function helps diagnose issues with deferrable load optimization
+    by checking current sensor values, available profiles, and optimization parameters.
+
+    :param input_data_dict: A dictionary with multiple data used by the action functions
+    :type input_data_dict: dict
+    :param logger: The passed logger object
+    :type logger: logging.Logger
+    :param debug: True to debug, useful for unit testing, defaults to False
+    :type debug: Optional[bool], optional
+    :return: Dictionary containing analysis results
+    :rtype: dict
+    """
+    logger.info("Starting deferrable load status analysis")
+
+    analysis_results = {
+        "available_profiles": [],
+        "sensor_data": {},
+        "runtime_parameters": {},
+        "recommendations": []
+    }
+
+    try:
+        # Check runtime parameters
+        passed_data = input_data_dict.get("params", {}).get("passed_data", {})
+        analysis_results["runtime_parameters"] = {
+            "def_profile": passed_data.get("def_profile", []),
+            "p_deferrable_nom": passed_data.get("p_deferrable_nom", []),
+            "def_total_hours": passed_data.get("def_total_hours", [])
+        }
+
+        # Check available profiles
+        profiles_dir = input_data_dict["emhass_conf"]["data_path"] / "deferrable_profiles"
+        if profiles_dir.exists():
+            for profile_file in profiles_dir.glob("*.pkl"):
+                try:
+                    async with aiofiles.open(profile_file, "rb") as f:
+                        content = await f.read()
+                        profile_data = pickle.loads(content)
+
+                    analysis_results["available_profiles"].append({
+                        "name": profile_file.stem,
+                        "deferrable_load_id": profile_data.get("deferrable_load_id", "unknown"),
+                        "profile_length": len(profile_data.get("load_profile", [])),
+                        "total_energy": sum(profile_data.get("load_profile", [])) *
+                                      input_data_dict.get("retrieve_hass_conf", {}).get("optimization_time_step", 30) / 60,
+                        "created_timestamp": profile_data.get("created_timestamp", "unknown")
+                    })
+                except Exception as e:
+                    logger.warning(f"Could not analyze profile {profile_file}: {e}")
+
+        # Check current sensor data
+        rh = input_data_dict.get("rh")
+        if rh and hasattr(rh, 'df_final') and rh.df_final is not None:
+            df = rh.df_final.copy()
+            analysis_results["sensor_data"]["available_columns"] = list(df.columns)
+            analysis_results["sensor_data"]["data_range"] = {
+                "start": str(df.index[0]) if len(df) > 0 else "No data",
+                "end": str(df.index[-1]) if len(df) > 0 else "No data",
+                "length": len(df)
+            }
+
+            # Analyze potential deferrable load sensors
+            for col in df.columns:
+                if any(keyword in col.lower() for keyword in ['deferrable', 'wash', 'dryer', 'dishwash', 'heat_pump']):
+                    recent_values = df[col].iloc[:5].values if len(df) >= 5 else df[col].values
+                    analysis_results["sensor_data"][col] = {
+                        "recent_values": recent_values.tolist(),
+                        "avg_recent": float(recent_values.mean()) if len(recent_values) > 0 else 0,
+                        "max_recent": float(recent_values.max()) if len(recent_values) > 0 else 0
+                    }
+
+        # Generate recommendations
+        def_profile = analysis_results["runtime_parameters"]["def_profile"]
+        if def_profile and any(p is not None for p in def_profile):
+            available_names = [p["name"] for p in analysis_results["available_profiles"]]
+            for i, profile_name in enumerate(def_profile):
+                if profile_name and profile_name not in available_names:
+                    analysis_results["recommendations"].append(
+                        f"Profile '{profile_name}' for load {i} not found. Available: {available_names}"
+                    )
+                elif profile_name in available_names:
+                    profile_info = next(p for p in analysis_results["available_profiles"] if p["name"] == profile_name)
+                    sensor_id = profile_info["deferrable_load_id"]
+                    if sensor_id not in analysis_results["sensor_data"]:
+                        analysis_results["recommendations"].append(
+                            f"Sensor '{sensor_id}' for profile '{profile_name}' not found in current data"
+                        )
+
+        if not analysis_results["available_profiles"]:
+            analysis_results["recommendations"].append(
+                "No deferrable profiles found. Use /action/teach-deferrable to create profiles first."
+            )
+
+        logger.info(f"Analysis complete. Found {len(analysis_results['available_profiles'])} profiles, {len(analysis_results['recommendations'])} recommendations")
+        return analysis_results
+
+    except Exception as e:
+        logger.error(f"Error in debug_deferrable_status: {str(e)}")
+        analysis_results["error"] = str(e)
+        return analysis_results
+
+
+async def teach_deferrable(
+    input_data_dict: dict,
+    logger: logging.Logger,
+    debug: bool | None = False,
+) -> bool:
+    """
+    Teach/learn a deferrable load profile from Home Assistant historical data.
+
+    This function retrieves historical consumption data for a deferrable load
+    between specified start and end hours, and saves the profile for later use
+    in optimization.
+
+    :param input_data_dict: A dictionary with multiple data used by the action functions
+    :type input_data_dict: dict
+    :param logger: The passed logger object
+    :type logger: logging.Logger
+    :param debug: True to debug, useful for unit testing, defaults to False
+    :type debug: Optional[bool], optional
+    :return: True if successful, False otherwise
+    :rtype: bool
+    """
+    logger.info("Starting deferrable load profile teaching")
+
+    # Get required parameters from runtime data
+    passed_data = input_data_dict["params"]["passed_data"]
+
+    # Check for required parameters
+    required_params = ["start_time", "end_time", "deferrable_load_id"]
+    for param in required_params:
+        if param not in passed_data:
+            logger.error(f"Required parameter '{param}' not provided")
+            return False
+
+    start_time = passed_data["start_time"]
+    end_time = passed_data["end_time"]
+    deferrable_load_id = passed_data["deferrable_load_id"]
+
+    # Optional parameters
+    profile_name = passed_data.get("profile_name", f"profile_{deferrable_load_id}")
+    # days_to_retrieve = passed_data.get("days_to_retrieve", 7)  # Default to 7 days
+    # sensor_name = passed_data.get("sensor_name", deferrable_load_id)
+
+    logger.info(f"Teaching deferrable load profile: {profile_name}")
+    # logger.info(f"Sensor: {sensor_name}, Start: {start_time}, End: {end_time}, Days: {days_to_retrieve}")
+
+    try:
+        # Create a temporary retrieve_hass_conf for data retrieval
+        retrieve_hass_conf = input_data_dict["params"]["retrieve_hass_conf"].copy()
+
+        # Get historical data
+        days_list = None
+        var_list = [deferrable_load_id]
+        start_time_teach = start_time
+        end_time_teach = end_time
+
+        # Use the existing RetrieveHass instance to get data
+        rh = input_data_dict["rh"]
+
+        if not await rh.get_data(days_list, var_list, start_time_teach, end_time_teach):
+            logger.error("Failed to retrieve data from Home Assistant")
+            return False
+
+        # Prepare the data
+        rh.prepare_data(
+            deferrable_load_id,
+            load_negative=retrieve_hass_conf.get("load_negative", True),
+            set_zero_min=retrieve_hass_conf.get("set_zero_min", True),
+            var_replace_zero=[],
+            var_interp=[deferrable_load_id],
+        )
+
+        df = rh.df_final.copy()
+
+        # Filter data to only include the specified time window
+        # Convert start_time and end_time to time objects for filtering
+        # print(df)
+        # df_filtered = df[
+        #     (df.index.hour >= start_time) & (df.index.hour < end_time)
+        # ]
+
+        if df.empty:
+            logger.error(f"No data found between hours {start_time} and {end_time}")
+            return False
+        deferrable_load_id_new = deferrable_load_id + "_positive"
+        # Extract the load profile values for the sensor
+        if deferrable_load_id_new not in df.columns:
+            logger.error(f"Sensor '{deferrable_load_id}' not found in retrieved data")
+            return False
+        load_values = df[deferrable_load_id_new].values
+
+        # Calculate statistics
+        # mean_power = np.mean(load_values)
+        # max_power = np.max(df["max"].values)
+        # min_power = np.min(df["min"].values)
+        # total_energy = np.sum(load_values) * (retrieve_hass_conf["optimization_time_step"].seconds / 3600)  # kWh
+        # Create profile data structure
+        profile_data = {
+            "profile_name": profile_name,
+            "deferrable_load_id": deferrable_load_id_new,
+            "start_time": start_time,
+            "end_time": end_time,
+            "created_timestamp": datetime.now(UTC).isoformat(),
+            "load_profile": load_values.tolist(),
+            "statistics": {
+                # "mean_power": float(mean_power),
+                # "max_power": float(max_power),
+                # "min_power": float(min_power),
+                # "total_energy": float(total_energy),
+                "num_datapoints": len(load_values)
+            },
+            # "time_step_minutes": pd.to_timedelta(
+            #     retrieve_hass_conf["optimization_time_step"], "minute"
+            # )
+        }
+
+        # Save profile to file
+        profiles_dir = input_data_dict["emhass_conf"]["data_path"] / "deferrable_profiles"
+        profiles_dir.mkdir(exist_ok=True)
+
+        profile_filename = f"{profile_name}.pkl"
+        profile_path = profiles_dir / profile_filename
+
+        if not debug:
+            async with aiofiles.open(profile_path, "wb") as f:
+                await f.write(pickle.dumps(profile_data))
+
+        logger.info(f"Deferrable load profile saved to: {profile_path}")
+        # logger.info(f"Profile statistics - Mean: {mean_power:.2f}W, Max: {max_power:.2f}W, Total Energy: {total_energy:.2f}kWh")
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Error in teach_deferrable: {str(e)}")
+        return False
+
 
 async def publish_data(
     input_data_dict: dict,

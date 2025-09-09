@@ -23,6 +23,7 @@ from quart import logging as log
 from emhass.command_line_async import (
     continual_publish,
     dayahead_forecast_optim,
+    debug_deferrable_status,
     forecast_model_fit,
     forecast_model_predict,
     forecast_model_tune,
@@ -32,6 +33,7 @@ from emhass.command_line_async import (
     regressor_model_fit,
     regressor_model_predict,
     set_input_data_dict,
+    teach_deferrable,
     weather_forecast_cache,
 )
 from emhass.connection_manager import close_global_connection, get_websocket_client
@@ -393,11 +395,13 @@ async def action_call(action_name):
             if params.get("optim_conf", None) is not None:
                 costfun = params["optim_conf"].get("costfun", "profit")
             params = orjson.dumps(params).decode()
+            print(params)
     else:
         app.logger.error("Unable to find params.pkl file")
         return await make_response(await grabLog(ActionStr), 400)
     # Runtime
     runtimeparams = await request.get_json(force=True, silent=True)
+    print(runtimeparams)
     if runtimeparams is not None:
         if runtimeparams != "{}":
             app.logger.info("Passed runtime parameters: " + str(runtimeparams))
@@ -560,6 +564,77 @@ async def action_call(action_name):
         app.logger.info(ActionStr)
         await regressor_model_predict(input_data_dict, app.logger)
         msg = "EMHASS >> Action regressor-model-predict executed... \n"
+        if not await checkFileLog(ActionStr):
+            return await make_response(msg, 201)
+        return await make_response(await grabLog(ActionStr), 400)
+    # teach-deferrable
+    elif action_name == "teach-deferrable":
+        ActionStr = " >> Teaching deferrable load profile..."
+        app.logger.info(ActionStr)
+        await teach_deferrable(input_data_dict, app.logger)
+        msg = "EMHASS >> Action teach-deferrable executed... \n"
+        if not await checkFileLog(ActionStr):
+            return await make_response(msg, 201)
+        return await make_response(await grabLog(ActionStr), 400)
+    # debug-deferrable
+    elif action_name == "debug-deferrable":
+        ActionStr = " >> Analyzing deferrable load status..."
+        app.logger.info(ActionStr)
+        analysis_results = await debug_deferrable_status(input_data_dict, app.logger)
+
+        # Create HTML report
+        html_report = "<h2>Deferrable Load Analysis Report</h2>"
+
+        # Available profiles
+        html_report += "<h3>Available Profiles</h3>"
+        if analysis_results["available_profiles"]:
+            html_report += "<table border='1'><tr><th>Name</th><th>Sensor ID</th><th>Length</th><th>Energy (Wh)</th><th>Created</th></tr>"
+            for profile in analysis_results["available_profiles"]:
+                html_report += f"<tr><td>{profile['name']}</td><td>{profile['deferrable_load_id']}</td><td>{profile['profile_length']}</td><td>{profile['total_energy']:.0f}</td><td>{profile['created_timestamp']}</td></tr>"
+            html_report += "</table>"
+        else:
+            html_report += "<p>No profiles found</p>"
+
+        # Runtime parameters
+        html_report += "<h3>Runtime Parameters</h3>"
+        html_report += f"<p>def_profile: {analysis_results['runtime_parameters']['def_profile']}</p>"
+        html_report += f"<p>p_deferrable_nom: {analysis_results['runtime_parameters']['p_deferrable_nom']}</p>"
+        html_report += f"<p>def_total_hours: {analysis_results['runtime_parameters']['def_total_hours']}</p>"
+
+        # Sensor data
+        html_report += "<h3>Sensor Data</h3>"
+        sensor_data = analysis_results["sensor_data"]
+        if "data_range" in sensor_data:
+            html_report += f"<p>Data range: {sensor_data['data_range']['start']} to {sensor_data['data_range']['end']} ({sensor_data['data_range']['length']} points)</p>"
+
+        if len([k for k in sensor_data.keys() if k not in ['available_columns', 'data_range']]) > 0:
+            html_report += "<table border='1'><tr><th>Sensor</th><th>Recent Avg</th><th>Recent Max</th><th>Recent Values</th></tr>"
+            for sensor, data in sensor_data.items():
+                if sensor not in ['available_columns', 'data_range']:
+                    html_report += f"<tr><td>{sensor}</td><td>{data['avg_recent']:.1f}W</td><td>{data['max_recent']:.1f}W</td><td>{data['recent_values']}</td></tr>"
+            html_report += "</table>"
+
+        # Recommendations
+        html_report += "<h3>Recommendations</h3>"
+        if analysis_results["recommendations"]:
+            html_report += "<ul>"
+            for rec in analysis_results["recommendations"]:
+                html_report += f"<li>{rec}</li>"
+            html_report += "</ul>"
+        else:
+            html_report += "<p>No issues detected</p>"
+
+        # Create injection dict for display
+        injection_dict = {
+            "title": "<h2>Deferrable Load Debug Analysis</h2>",
+            "table1": html_report
+        }
+
+        async with aiofiles.open(str(emhass_conf["data_path"] / "injection_dict.pkl"), "wb") as fid:
+            content = pickle.dumps(injection_dict)
+            await fid.write(content)
+
+        msg = "EMHASS >> Action debug-deferrable executed... \n"
         if not await checkFileLog(ActionStr):
             return await make_response(msg, 201)
         return await make_response(await grabLog(ActionStr), 400)

@@ -479,6 +479,21 @@ async def treat_runtimeparams(
                 target = runtimeparams["target"]
                 params["passed_data"]["target"] = target
 
+        # teach-deferrable
+        if set_type == "teach-deferrable":
+            if "start_time" in runtimeparams:
+                start_time = runtimeparams["start_time"]
+                params["passed_data"]["start_time"] = start_time
+            if "end_time" in runtimeparams:
+                end_time = runtimeparams["end_time"]
+                params["passed_data"]["end_time"] = end_time
+            if "deferrable_load_id" in runtimeparams:
+                deferrable_load_id = runtimeparams["deferrable_load_id"]
+                params["passed_data"]["deferrable_load_id"] = deferrable_load_id
+            if "profile_name" in runtimeparams:
+                profile_name = runtimeparams["profile_name"]
+                params["passed_data"]["profile_name"] = profile_name
+
         # MPC control case
         if set_type == "naive-mpc-optim":
             if "prediction_horizon" not in runtimeparams.keys():
@@ -533,6 +548,10 @@ async def treat_runtimeparams(
             params["passed_data"]["end_timesteps_of_each_deferrable_load"] = params[
                 "optim_conf"
             ].get("end_timesteps_of_each_deferrable_load", None)
+
+            # Handle def_profile parameter for deferrable load profiles
+            if "def_profile" in runtimeparams.keys():
+                params["passed_data"]["def_profile"] = runtimeparams["def_profile"]
 
             forecast_dates = copy.deepcopy(forecast_dates)[0:prediction_horizon]
 
@@ -860,6 +879,8 @@ async def treat_runtimeparams(
             params["passed_data"]["custom_deferrable_forecast_id"] = runtimeparams[
                 "custom_deferrable_forecast_id"
             ]
+        if "def_profile" in runtimeparams.keys():
+            params["passed_data"]["def_profile"] = runtimeparams["def_profile"]
         if "custom_predicted_temperature_id" in runtimeparams.keys():
             params["passed_data"]["custom_predicted_temperature_id"] = runtimeparams[
                 "custom_predicted_temperature_id"
@@ -947,6 +968,7 @@ def get_injection_dict(df: pd.DataFrame, plot_size: int | None = 1366) -> dict:
         template="presentation",
         line_shape="hv",
         color_discrete_sequence=colors,
+        render_mode="svg",
     )
     fig_0.update_layout(xaxis_title="Timestamp", yaxis_title="System powers (W)")
     if "SOC_opt" in df.columns.to_list():
@@ -956,6 +978,7 @@ def get_injection_dict(df: pd.DataFrame, plot_size: int | None = 1366) -> dict:
             template="presentation",
             line_shape="hv",
             color_discrete_sequence=colors,
+            render_mode="svg",
         )
         fig_1.update_layout(xaxis_title="Timestamp", yaxis_title="Battery SOC (%)")
     cols_cost = [i for i in df.columns.to_list() if "cost_" in i or "unit_" in i]
@@ -969,6 +992,7 @@ def get_injection_dict(df: pd.DataFrame, plot_size: int | None = 1366) -> dict:
         template="presentation",
         line_shape="hv",
         color_discrete_sequence=colors,
+        render_mode="svg",
     )
     fig_2.update_layout(xaxis_title="Timestamp", yaxis_title="System costs (currency)")
     # Get full path to image
@@ -1796,6 +1820,7 @@ async def build_params(
         "operating_hours_of_each_deferrable_load": None,
         "start_timesteps_of_each_deferrable_load": None,
         "end_timesteps_of_each_deferrable_load": None,
+        "def_profile": None,
         "alpha": None,
         "beta": None,
     }

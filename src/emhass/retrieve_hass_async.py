@@ -109,6 +109,8 @@ class RetrieveHass:
         self,
         days_list: pd.date_range,
         var_list: list[str],
+        start_time_teach: datetime = None,
+        end_time_teach: datetime = None,
     ) -> bool:
         r"""
         Retrieve the actual data from hass.
@@ -133,7 +135,7 @@ class RetrieveHass:
             self.logger.error("WebSocket connection timed out")
             return False
         except Exception as e:
-            self.logger.error(f"Fout bij connectie opzetten: {e}")
+            self.logger.error(f"WebSocket connection error: {e}")
             return False
 
         self.var_list = var_list
@@ -144,8 +146,16 @@ class RetrieveHass:
         #     return True
 
         # Calculate time range
-        start_time = min(days_list).to_pydatetime()
-        end_time = datetime.now()
+        if start_time_teach is not None:
+            start_time = start_time_teach
+            teach = True
+        else:
+            start_time = min(days_list).to_pydatetime()
+            teach = False
+        if end_time_teach is not None:
+            end_time = end_time_teach
+        else:
+            end_time = datetime.now()
 
         # Try to get statistics data (which contains the actual historical data)
         try:
@@ -162,10 +172,10 @@ class RetrieveHass:
             )
 
             # Convert statistics data to DataFrame
-            self.df_final = self._convert_statistics_to_dataframe(stats_data, var_list)
+            self.df_final = self._convert_statistics_to_dataframe(stats_data, var_list, teach)
 
             t1 = time.time()
-            self.logger.info(f"Statistics data retrieval for {len(days_list):.2f} days took {t1 - t0:.2f} seconds")
+            self.logger.info(f"Statistics data retrieval took {t1 - t0:.2f} seconds")
 
             return not self.df_final.empty
 
@@ -716,7 +726,8 @@ class RetrieveHass:
     def _convert_statistics_to_dataframe(
         self,
         stats_data: dict[str, Any],
-        var_list: list[str]
+        var_list: list[str],
+        teach: bool = False
     ) -> pd.DataFrame:
         """Convert WebSocket statistics data to DataFrame."""
         import pandas as pd
@@ -753,21 +764,32 @@ class RetrieveHass:
 
                     # Use mean, max, min or sum depending on what's available
                     value = None
-                    if "mean" in stat and stat["mean"] is not None:
-                        value = stat["mean"]
-                    elif "sum" in stat and stat["sum"] is not None:
-                        value = stat["sum"]
-                    elif "max" in stat and stat["max"] is not None:
-                        value = stat["max"]
-                    elif "min" in stat and stat["min"] is not None:
-                        value = stat["min"]
+                    if teach:
+                        if "mean" in stat and stat["mean"] is not None:
+                            value = stat["mean"]
+                        if "max" in stat and stat["max"] is not None:
+                            max = stat["max"]
+                        if "min" in stat and stat["min"] is not None:
+                            min = stat["min"]
+                    else:
+                        if "mean" in stat and stat["mean"] is not None:
+                            value = stat["mean"]
+                        elif "max" in stat and stat["max"] is not None:
+                            value = stat["max"]
+                    # elif "min" in stat and stat["min"] is not None:
+                    #     value = stat["min"]
+                    # elif "sum" in stat and stat["sum"] is not None:
+                    #     value = stat["sum"]
 
                     if value is not None:
                         try:
                             value = float(value)
                             entity_data.append({
                                 "timestamp": timestamp,
-                                entity_id: value
+                                entity_id: value,
+                                # "max": float(max),
+                                # "min": float(min)
+
                             })
                         except (ValueError, TypeError):
                             self.logger.debug(f"Could not convert value to float: {value}")
